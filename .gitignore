@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+results/_llm_cache/
+results/_llm_logs/
+paper/
+*.pyc
+.DS_Store
