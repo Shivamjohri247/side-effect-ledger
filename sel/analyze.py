@@ -12,19 +12,19 @@ from collections import defaultdict
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
-ap.add_argument("path")
+ap.add_argument("path", nargs="+")
 ap.add_argument("--tag", default="main")
 ap.add_argument("--no_figs", action="store_true")
 args = ap.parse_args()
 
-ORDER = ["isolated", "summary", "full_history", "ledger", "check", "check_generic", "sel"]
+ORDER = ["isolated", "summary", "full_history", "ledger", "check", "check_generic", "check_rules", "critic", "sel"]
 LABEL = {"isolated": "Isolated", "summary": "Summary notes", "full_history": "Full history",
          "ledger": "Ledger only", "check": "Check only", "check_generic": "Generic re-check",
-         "sel": "SEL (ledger+check)"}
+         "check_rules": "Rules-only check", "critic": "LLM critic", "sel": "SEL (ledger+check)"}
 METRICS = ["goal_success", "clean_success", "goal_frac", "clobbers", "lingering", "steps",
            "llm_calls", "ktok", "check_rejects", "invalid", "parse_fail", "step_cap_hits"]
 
-rows = [json.loads(l) for l in open(args.path)]
+rows = [json.loads(l) for p in args.path for l in open(p)]
 for r in rows:
     r["ktok"] = r["prompt_chars"] / 4 / 1000  # approx. prompt kilo-tokens per episode
 conds = [c for c in ORDER if any(r["cond"] == c for r in rows)]
@@ -43,7 +43,32 @@ def mean(xs):
 def boot_ci(vals):
     n = len(vals)
     ms = sorted(mean([vals[rng.randrange(n)] for _ in range(n)]) for _ in range(B))
-    return ms[int(0.025 * B)], ms[int(0.975 * B)]
+    return ms[round(0.025 * (B - 1))], ms[round(0.975 * (B - 1))]
+
+
+def binom_cdf(k, n, p):
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k + 1))
+
+
+def cp_ci(x, n, a=0.05):
+    """Exact Clopper-Pearson interval for x successes out of n (bisection; no scipy)."""
+    def bis(f):
+        lo, hi = 0.0, 1.0
+        for _ in range(60):
+            m = (lo + hi) / 2
+            lo, hi = (m, hi) if f(m) else (lo, m)
+        return (lo + hi) / 2
+    return (0.0 if x == 0 else bis(lambda p: 1 - binom_cdf(x - 1, n, p) < a / 2),
+            1.0 if x == n else bis(lambda p: binom_cdf(x, n, p) > a / 2))
+
+
+def holm(ps):
+    order = sorted(range(len(ps)), key=lambda i: ps[i])
+    adj, run = [0.0] * len(ps), 0.0
+    for r, i in enumerate(order):
+        run = max(run, min(1.0, (len(ps) - r) * ps[i]))
+        adj[i] = run
+    return adj
 
 
 def sign_test(a, b):
@@ -65,7 +90,8 @@ for c in conds:
     d = {}
     for m in METRICS:
         v = [float(r.get(m, 0)) for r in rs]
-        lo, hi = boot_ci(v)
+        # binary success rates: exact Clopper-Pearson; other metrics: percentile bootstrap over episodes
+        lo, hi = cp_ci(int(sum(v)), len(v)) if m in ("goal_success", "clean_success") else boot_ci(v)
         d[m] = {"mean": mean(v), "lo": lo, "hi": hi}
     summary["conditions"][c] = d
     summary["errors"][c] = sum(r.get("llm_errors", 0) for r in rs)
@@ -80,7 +106,7 @@ for c in conds:
             kinds[s["kind"]].append(int(s["held_at_end"]))
     summary["by_kind"][c] = {k: {"rate": mean(v), "n": len(v)} for k, v in sorted(kinds.items())}
 
-for base in ("isolated", "summary", "full_history", "check_generic", "ledger", "check"):
+for base in ("isolated", "summary", "full_history", "check_generic", "ledger", "check", "check_rules", "critic"):
     if base in conds and "sel" in conds:
         for m in ("goal_success", "clean_success"):
             a = [by[e]["sel"][m] for e in eps]
@@ -91,7 +117,10 @@ for base in ("isolated", "summary", "full_history", "check_generic", "ledger", "
             summary["tests"][f"sel_vs_{base}:{m}"] = {"sel_wins": wa, "base_wins": wb, "p": p,
                                                        "diff": mean(diffs), "lo": lo, "hi": hi}
 
-out = Path(args.path).parent / f"summary_{args.tag}.json"
+keys = list(summary["tests"])
+for k, pa in zip(keys, holm([summary["tests"][k]["p"] for k in keys])):
+    summary["tests"][k]["p_holm"] = pa  # Holm over all SEL-vs-baseline tests in this file
+out = Path(args.path[0]).parent / f"summary_{args.tag}.json"
 out.write_text(json.dumps(summary, indent=1))
 
 print(f"paired episodes: {len(eps)}  rows: {len(rows)}")
@@ -111,7 +140,7 @@ for c in conds:
     print(f"  {c:14s} " + "  ".join(f"{k}={v['rate']:.2f}(n={v['n']})" for k, v in summary["by_kind"][c].items()))
 print("\npaired tests (SEL minus baseline):")
 for k, v in summary["tests"].items():
-    print(f"  {k:36s} diff={v['diff']:+.2f} [{v['lo']:+.2f},{v['hi']:+.2f}] wins {v['sel_wins']}:{v['base_wins']} p={v['p']:.4f}")
+    print(f"  {k:36s} diff={v['diff']:+.2f} [{v['lo']:+.2f},{v['hi']:+.2f}] wins {v['sel_wins']}:{v['base_wins']} p={v['p']:.2g} holm={v['p_holm']:.2g}")
 
 if not args.no_figs:
     import matplotlib
@@ -138,7 +167,7 @@ if not args.no_figs:
     fig.savefig(figdir / f"{args.tag}_success.png", dpi=220)
     # Fig 2: clean success vs prompt tokens, by K
     fig, ax = plt.subplots(figsize=(3.5, 2.4))
-    for c, mk in zip(conds, "os^vDPX"):
+    for c, mk in zip(conds, "os^vDPX*h"):
         xs = [summary["by_K"][K][c]["ktok"] for K in summary["by_K"]]
         ys = [summary["by_K"][K][c]["clean_success"] for K in summary["by_K"]]
         ax.plot(xs, ys, marker=mk, ms=4, lw=1, label=LABEL[c].replace(" (ledger+check)", ""))

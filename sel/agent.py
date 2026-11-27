@@ -14,6 +14,11 @@ channel:
   check_generic: control for the check -- the first "done" of each subtask is rejected with a
                  content-free reminder of the household rules (second chance, no information).
   sel          : ledger in context + commit check (full method).
+  check_rules  : (added after review) commit check restricted to the household rules -- containers
+                 closed, appliances off, hand empty -- with no protected results and no ledger in context.
+  critic       : (added after review) LLM verifier at "done": a separate call to the same model sees the
+                 job plan, the full transcript of all subtasks so far and the current observation, and either
+                 accepts or lists what must be fixed. No ledger anywhere.
 
 The ledger is built only from the effects of actions the harness executed
 (never from hidden simulator state); the commit check uses only the ledger.
@@ -26,7 +31,17 @@ from typing import Dict, List, Optional
 from llm import extract_json
 from sim import ACTION_HELP, OPENABLE, APPLIANCES
 
-CONDITIONS = ["isolated", "summary", "full_history", "ledger", "check", "check_generic", "sel"]
+CONDITIONS = ["isolated", "summary", "full_history", "ledger", "check", "check_generic", "sel",
+              "check_rules", "critic"]
+
+CRITIC = (
+    "You are a strict verifier for a household robot that is about to declare its subtask done. "
+    "Household rules: when a worker declares done, (1) the results of all earlier subtasks must still hold, "
+    "(2) cupboard, fridge and drawer must be closed, (3) appliances must be off, (4) the worker's hand must be "
+    "empty, and its own subtask must be complete. Use the transcript to work out where objects are now and what "
+    "is open or on. Reply with ONE JSON object only: {\"ok\": true} if everything holds, otherwise "
+    "{\"ok\": false, \"fix\": [\"<short instruction>\", ...]} naming exactly what must still be done."
+)
 MAX_STEPS = 30
 
 SYSTEM = (
@@ -153,7 +168,7 @@ def run_episode(ep, cond: str, llm, log: Optional[list] = None, exo_p: float = 0
     world = ep.world()
     ledger = Ledger(ep.init_loc)
     use_ledger_ctx = cond in ("ledger", "sel")
-    use_check = cond in ("check", "sel")
+    use_check = cond in ("check", "sel", "check_rules")
     notes: List[str] = []
     transcript: List[str] = []
     stats = {"llm_calls": 0, "prompt_chars": 0, "steps": 0, "invalid": 0, "parse_fail": 0,
@@ -219,8 +234,21 @@ def run_episode(ep, cond: str, llm, log: Optional[list] = None, exo_p: float = 0
                     pending = ["re-verify the household rules (earlier results still hold, containers closed, "
                                "appliances off, hand empty), then declare done again"]
                     continue
+                if cond == "critic":
+                    ctx = (plan_text(ep.subtasks, si) + "\n\nTRANSCRIPT OF ALL SUBTASKS SO FAR (including the current one):\n"
+                           + "\n".join(transcript + cur_tr) + "\n\nCURRENT OBSERVATION: " + world.obs_text()
+                           + f"\n\nThe worker on subtask {si + 1} ({st.text}) now declares done. May it?")
+                    verdict = extract_json(call([{"role": "system", "content": CRITIC}, {"role": "user", "content": ctx}]))
+                    fix = [str(x) for x in verdict.get("fix", [])][:6] if isinstance(verdict, dict) else []
+                    if isinstance(verdict, dict) and verdict.get("ok") is False and fix:
+                        stats["check_rejects"] += 1
+                        own.append("  done -> REJECTED by verifier; first: " + "; ".join(fix))
+                        pending = fix
+                        continue
                 if use_check:
                     d = ledger.debts()
+                    if cond == "check_rules":
+                        d = [x for x in d if not x.startswith("restore:")]
                     if d:
                         stats["check_rejects"] += 1
                         own.append("  done -> REJECTED by ledger check; first: " + "; ".join(d))
@@ -228,7 +256,7 @@ def run_episode(ep, cond: str, llm, log: Optional[list] = None, exo_p: float = 0
                         continue
                 own.append("  done")
                 break
-            w = ledger.threat(act) if use_check else None  # evaluated before the effect is applied
+            w = ledger.threat(act) if cond in ("check", "sel") else None  # evaluated before the effect is applied
             res = world.step(act)
             ledger.apply(res["effects"], si)
             msg = "ok" if res["ok"] else f"failed: {res['reason']}"
@@ -240,7 +268,7 @@ def run_episode(ep, cond: str, llm, log: Optional[list] = None, exo_p: float = 0
                     msg += f" ({w})"
             line = (f"  (thought: {thought}) " if thought else "  ") + f"{json.dumps(act)} -> {msg} [{world.short_obs()}]"
             if pending and use_check and res["ok"]:
-                pending = ledger.debts()  # keep the outstanding list current as items get fixed
+                pending = [x for x in ledger.debts() if cond != "check_rules" or not x.startswith("restore:")]  # keep the outstanding list current as items get fixed
             own.append(line)
             cur_tr.append(f"[subtask {si + 1}] {json.dumps(act)} -> {msg}. {world.obs_text()}")
         else:

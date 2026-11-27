@@ -30,9 +30,12 @@ A long household job is split into K subtasks. Each subtask is run by a fresh LL
 - `sel/agent.py`: the seven conditions, the ledger, and the commit check.
 - `sel/llm.py`: LLM client for local Ollama, NVIDIA NIM, or OpenRouter. API keys are read from the environment or a local auth file and are never stored here.
 - `sel/run.py`: resumable parallel runner.
-- `sel/analyze.py`: paired-bootstrap confidence intervals, sign tests, and figures.
+- `sel/analyze.py`: Clopper-Pearson and paired-bootstrap intervals, Holm-adjusted sign tests, and figures.
 - `sel/test_sel.py`: deterministic tests.
-- `results/main.jsonl`, `results/exo.jsonl`: raw per-episode rows, each including the full trace.
+- `sel/fetch_refs.py`: helper used to fetch reference metadata.
+- `verify/recompute.py`: independent recomputation of the original-run numbers; `verify/stats_exact.py`: exact intervals, sign test, Holm.
+- `verify/recompute_v2.py`: independent recomputation of every number in the revised paper (main + extension + disturbance runs); `verify/critic_rejections.py`: classification of the LLM critic's rejections.
+- `results/main.jsonl`, `results/exo.jsonl`, `results/ext.jsonl`: raw per-episode rows, each including the full trace.
 - `results/summary_*.json`: the aggregated results.
 
 ## Reproduce
@@ -41,14 +44,26 @@ A long household job is split into K subtasks. Each subtask is run by a fresh LL
 python3 -m venv .venv && .venv/bin/pip install httpx numpy matplotlib
 ollama pull qwen3:14b
 cd sel
-python3 test_sel.py && python3 oracle.py
-SEL_BACKEND=ollama python3 run.py --out ../results/main.jsonl --Ks 4 6 8 --n 8 --workers 1
+python3 test_sel.py && python3 oracle.py && python3 oracle.py 5000   # main and disturbance seeds
+SEL_BACKEND=ollama python3 run.py --out ../results/main.jsonl --Ks 4 6 8 --n 8 --workers 1 \
+    --conds isolated summary full_history ledger check check_generic sel
 SEL_BACKEND=ollama python3 run.py --out ../results/exo.jsonl --Ks 4 6 8 --n 4 \
     --conds isolated full_history sel --exo_p 0.5 --seed0 5000
-../.venv/bin/python analyze.py ../results/main.jsonl --tag main
+# added after review: rules-only check and LLM critic on the same episodes
+SEL_BACKEND=ollama python3 run.py --out ../results/ext.jsonl --Ks 4 6 8 --n 8 --workers 1 \
+    --conds check_rules critic
+../.venv/bin/python analyze.py ../results/main.jsonl ../results/ext.jsonl --tag main
+../.venv/bin/python analyze.py ../results/exo.jsonl --tag exo
 ```
 
-`run_all.sh` runs all of these steps in order. The full study takes about 30 hours on a laptop GPU.
+`run_all.sh` runs the first three study steps and `run_ext.sh` the review extension. The main study takes
+about 30 hours on a laptop GPU and the extension about 15 hours (the critic is slow at K=8).
+
+## Known issues (found in review; kept so the code matches the reported runs)
+
+- `Ledger.apply` clears `holding` when a wipe sweeps objects, so the commit check can miss "put down the cloth" right after a wipe. Replaying every logged run shows this never let a wrong `done` through in the main study, and it did so twice in the disturbance study, both in episodes that ended with no rule violations.
+- `llm.extract_json` can fail on a reply whose `thought` contains a colon followed by a comma. This never happened in the logged runs: `parse_fail` is 0 everywhere.
+- `sel/tasks.py` used to iterate a `set`, so the episodes depended on `PYTHONHASHSEED`. It now uses a fixed order, which reproduces all 204 committed episodes under any hash seed.
 
 ## License
 

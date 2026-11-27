@@ -56,11 +56,13 @@ def solve_sub(r,st,prot):
     for a in APPLIANCES:
         if w.on[a]: r.go(a); r.do("toggle",a)
     r.n+=1  # done
+import os, sys
+SEED0 = int(sys.argv[1]) if len(sys.argv) > 1 else 1000  # 1000: main study; 5000: disturbance study
 tot=collections.Counter(); bad=[]; allp=[]
 for K in (4,6,8):
     nsub=0; nfeas=0; nep=0; epok=0; pep=[]
     for i in range(20):
-        seed=1000+K*100+i; ep=make_episode(seed,K); w=ep.world(); prot=[]; eok=True; pe=1.0; row=[]
+        seed=SEED0+K*100+i; ep=make_episode(seed,K); w=ep.world(); prot=[]; eok=True; pe=1.0; row=[]
         for st in ep.subtasks:
             prot=prot+st.goals; r=R(w)
             try: solve_sub(r,st,prot)

@@ -69,6 +69,14 @@ def test_harness_clobber_and_check():
     r = run_episode(ep, "check", ScriptLLM(s1 + s2 + repair))
     assert r["check_rejects"] == 1 and r["warnings"] == 1, r
     assert r["clobbers"] == 0 and r["goal_success"] == 1 and r["clean_success"] == 1, r
+    # rules-only check: nothing open/on/held, so the clobber is NOT caught
+    r = run_episode(ep, "check_rules", ScriptLLM(s1 + s2))
+    assert r["check_rejects"] == 0 and r["clobbers"] == 1, r
+    # LLM critic: the scripted verdict follows each "done"; a rejection triggers the repair
+    ok, bad = {"ok": True}, {"ok": False, "fix": ["put the mug back on the table"]}
+    r = run_episode(ep, "critic", ScriptLLM(s1 + [ok] + s2 + [bad] + repair + [ok]))
+    assert r["check_rejects"] == 1 and r["clobbers"] == 0 and r["goal_success"] == 1, r
+    assert r["llm_calls"] == len(s1 + s2 + repair) + 3, r
 
 
 def test_generator_feasible():
