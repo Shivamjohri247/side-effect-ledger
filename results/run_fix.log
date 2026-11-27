@@ -1,0 +1,5 @@
+4 jobs to run
+[1/4] K=4 seed=1404 check_rules  goal=0 clean=0 clob=1 ling=1 steps=42 err=0
+[2/4] K=4 seed=1404 critic       goal=0 clean=0 clob=0 ling=1 steps=96 err=0
+[3/4] K=6 seed=1600 check_rules  goal=0 clean=0 clob=1 ling=0 steps=54 err=0
+[4/4] K=6 seed=1600 critic       goal=1 clean=0 clob=0 ling=2 steps=156 err=0

@@ -165,16 +165,18 @@ if not args.no_figs:
     ax.legend(fontsize=6.5, frameon=False, loc="upper left")
     fig.tight_layout()
     fig.savefig(figdir / f"{args.tag}_success.png", dpi=220)
-    # Fig 2: clean success vs prompt tokens, by K
-    fig, ax = plt.subplots(figsize=(3.5, 2.4))
+    # Fig 2: clean success by horizon K (prompt cost is in the table)
+    fig, ax = plt.subplots(figsize=(3.5, 2.3))
+    Ks = list(summary["by_K"])
     for c, mk in zip(conds, "os^vDPX*h"):
-        xs = [summary["by_K"][K][c]["ktok"] for K in summary["by_K"]]
-        ys = [summary["by_K"][K][c]["clean_success"] for K in summary["by_K"]]
-        ax.plot(xs, ys, marker=mk, ms=4, lw=1, label=LABEL[c].replace(" (ledger+check)", ""))
-    ax.set_xlabel("prompt tokens per episode (k, approx.)", fontsize=8)
+        ys = [summary["by_K"][K][c]["clean_success"] for K in Ks]
+        ax.plot([int(K) for K in Ks], ys, marker=mk, ms=4, lw=1, label=LABEL[c].replace(" (ledger+check)", ""))
+    ax.set_xticks([int(K) for K in Ks])
+    ax.set_xlabel("subtasks per job (K)", fontsize=8)
     ax.set_ylabel("clean success", fontsize=8)
+    ax.set_ylim(-0.05, 1.05)
     ax.tick_params(labelsize=7)
-    ax.legend(fontsize=5.5, frameon=False, ncol=2)
+    ax.legend(fontsize=5.5, frameon=False, loc="center left", bbox_to_anchor=(1.0, 0.5))
     fig.tight_layout()
-    fig.savefig(figdir / f"{args.tag}_tokens.png", dpi=220)
+    fig.savefig(figdir / f"{args.tag}_tokens.png", dpi=220, bbox_inches="tight")
     print("figures written to", figdir)

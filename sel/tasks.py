@@ -86,7 +86,7 @@ def make_episode(seed: int, K: int) -> Episode:
     while len(subs) < K:
         cands = []
         # clobber candidates
-        for S in ("table", "shelf", "counter"):  # fixed order (set iteration depends on PYTHONHASHSEED)
+        for S in ("table", "counter", "shelf"):  # fixed order matching the main run (set iteration depends on PYTHONHASHSEED)
             if S not in wiped and any(L == S for L in placed.values()):
                 cands.append(("wipe", S))
         for o, L in placed.items():
