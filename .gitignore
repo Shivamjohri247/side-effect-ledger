@@ -5,3 +5,5 @@ results/_llm_logs/
 paper/
 *.pyc
 .DS_Store
+results/_llm_cache_rep/
+results/_llm_logs_rep/
