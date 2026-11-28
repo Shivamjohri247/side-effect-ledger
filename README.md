@@ -26,6 +26,19 @@ A long household job is split into K subtasks. Each subtask is run by a fresh LL
 - The check enforces exactly the conditions that are scored, so these results measure whether workers can repair what an exact verifier reports.
 - Disturbance stress test (`results/exo.jsonl`, 12 episodes): SEL .42 clean, baselines .00; not significant after Holm adjustment.
 
+## Pre-registered replication
+
+`replication/PREREG.md` was committed before the run. The replication used 24 fresh episodes (seeds 9400–9807, `--seed0 9000`) and a response cache that started empty (no reply from the reported run was reused), with four conditions: 96 runs, none excluded. Data is in `results/rep_main.jsonl` and the analysis in `verify/replication.py`.
+
+| Primary endpoint: clean success (Holm over 3) | Replication | Paired | Holm p | Reported run | Same direction |
+|---|---|---|---|---|---|
+| SEL vs isolated | 16/24 vs 0/24 | 16:0 | 9.2e-5 | 20:0 | yes |
+| SEL vs check only | 16/24 vs 8/24 | 8:0 | 0.0078 | 15:2 | yes |
+| SEL vs rules-only check | 16/24 vs 1/24 | 15:0 | 1.2e-4 | 19:0 | yes |
+
+- **SEL's clean success:** lower than in the reported run (.67 against .83). Clobbers per episode were 0.29 for SEL, 0.54 for check only, 1.75 for the rules-only check and 1.79 for isolated.
+- **Not re-run:** summary, full_history, ledger, check_generic and critic, for time.
+
 ## Layout
 
 - `sel/sim.py`: symbolic household simulator with partial observability and grasp slips. Each action returns its effects.
@@ -38,6 +51,7 @@ A long household job is split into K subtasks. Each subtask is run by a fresh LL
 - `sel/test_sel.py`: deterministic tests.
 - `sel/fetch_refs.py`: helper used to fetch reference metadata.
 - `verify/recompute.py`: independent recomputation of the original-run numbers; `verify/stats_exact.py`: exact intervals, sign test, Holm.
+- `results/rep_main.jsonl`, `replication/PREREG.md`, `run_rep.sh`, `verify/replication.py`: the pre-registered replication.
 - `verify/recompute_v2.py`: independent recomputation of every number in the revised paper (main + extension + disturbance runs); `verify/critic_rejections.py`: classification of the LLM critic's rejections.
 - `results/main.jsonl`, `results/exo.jsonl`, `results/ext.jsonl`: raw per-episode rows, each including the full trace.
 - `results/summary_*.json`: the aggregated results.
@@ -66,7 +80,7 @@ about 30 hours on a laptop GPU and the extension about 15 hours (the critic is s
 ## Known issues (found in review; kept so the code matches the reported runs)
 
 - `Ledger.apply` clears `holding` when a wipe sweeps objects, so the commit check can miss "put down the cloth" right after a wipe. Replaying the runs shows this never let a wrong `done` through under `check` or `sel` in the main study, and twice under `sel` in the disturbance study (episodes that ended with no rule violations). Under `check_rules` it let a `done` through with an object still held 34 times in 21 of 24 episodes (almost always the cloth right after a wipe), so the rules-only lingering count is partly a product of this bug.
-- `llm.extract_json` can fail on a reply whose `thought` contains a colon followed by a comma. This never happened in the logged runs: `parse_fail` is 0 everywhere.
+- `llm.extract_json` can fail on a reply whose `thought` contains a colon followed by a comma. This never happened in any logged run. `parse_fail` counts unparseable replies (LLM calls): 0 everywhere in the reported runs and 1 in the replication. That one was a reply under `check` (seed 9802) that listed several actions with invented outcomes instead of one JSON object, a different failure from this bug.
 - `sel/tasks.py` used to iterate a `set`, so the episodes depended on `PYTHONHASHSEED`. It now uses the fixed order the main run used, which reproduces every committed episode (main, extension and disturbance runs) under any hash seed. A first fix used a different order, which changed seeds 1404 and 1600; the extension rows run on those altered episodes are kept in `results/ext_mispaired.jsonl`, and both jobs were re-run on the correct episodes.
 
 ## License
